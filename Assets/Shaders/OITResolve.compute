@@ -1,0 +1,91 @@
+﻿/*
+MIT License
+
+Copyright (c) 2018 Pantelis Lekakis
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+#pragma kernel CSMain
+
+#include "OITCommon.cginc"
+
+#define SORT_MODE_OFF (0)
+#define SORT_MODE_INSERTION (1)
+
+float2	_OITTargetSize;
+uint	_OITSortMode;
+
+RWTexture2D<float4> _OITSortedTex;
+
+// Sort the nodes based on depth
+void Sort(inout OITNode io_nodes[MAX_OIT_PIXEL_NODES], uint i_count)
+{
+	for (uint i = 1; i < i_count; i++)
+	{
+		OITNode toInsert = io_nodes[i];
+		uint j = i;
+
+		// Assuming reversed depth
+		while (j > 0 && toInsert.depth < io_nodes[j - 1].depth)
+		{
+			io_nodes[j] = io_nodes[j - 1];
+			j--;
+		}
+		io_nodes[j] = toInsert;
+	}
+}
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x < (uint)_OITTargetSize.x && id.y < (uint)_OITTargetSize.y)
+	{
+		// Calculate viewport position [(0,0)..(width,height)] and find the current nodeCoord
+		const uint nodeCoord = (_OITTargetSize.y - id.y) * _OITTargetSize.x + id.x;
+
+		// These are the nodes that we'll sort for this pixel
+		OITNode nodes[MAX_OIT_PIXEL_NODES];
+
+		// Go through the headPointers for this pixel and update the local array until we run out of elements
+		uint count = 0;
+		uint next = _OITHeadPointers[nodeCoord];
+		while ((next != ~0u) && (count < MAX_OIT_PIXEL_NODES))
+		{
+			nodes[count] = _OITNodes[next];
+			next = nodes[count].next;
+			++count;
+		}
+
+		// Sort the nodes based on depth
+		if (_OITSortMode == SORT_MODE_INSERTION)
+		{
+			Sort(nodes, count);
+		}
+
+		// Colors are sorted, lerp from one to another based on the alpha 
+		float4 color = 0.0;
+		for (uint c = 0; c < count; c++)
+		{
+			color = lerp(color, nodes[c].color, nodes[c].color.a);
+		}
+
+		_OITSortedTex[id.xy] = color;
+	}
+}

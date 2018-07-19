@@ -71,7 +71,7 @@ Shader "Custom/Tank"
 				float4 diffuse = tex2D(_MainTex, i.uv);
 				diffuse.a = 0.5;
 
-				return diffuse.bbba;
+				return diffuse;
 			}
 			ENDCG
 		}

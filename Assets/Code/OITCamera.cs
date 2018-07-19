@@ -27,22 +27,32 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
+// Sort mode to use on the oit resolve pass
+public enum SortMode
+{    
+    Disabled    = 0,
+    Insertion   = 1
+}
+
 [ExecuteInEditMode]
 public class OITCamera : MonoBehaviour
 {
-    public Shader m_compositeShader;            // shader to composite the sorted transparency target with the rest of the scene
-    public ComputeShader m_clearBuffersShader;  // shader to clear the headPointer buffer when the camera starts rendering the scene
+    public SortMode m_sortMode = SortMode.Insertion;    // oit resolve sort mode
+    public Shader m_compositeShader;                    // shader to composite the sorted transparency target with the rest of the scene
+    public ComputeShader m_clearBuffersShader;          // shader to clear the headPointer buffer when the camera starts rendering the scene
+    public ComputeShader m_resolveShader;               // shader to sort the pixels and write out the final transparent pixel color
 
-    private ComputeBuffer m_headPointers;       // buffer where each element is a pointer to the linked list node head
-    private ComputeBuffer m_listNodes;          // per-pixel linked list, containing color & depth information
+    private ComputeBuffer m_headPointers;               // buffer where each element is a pointer to the linked list node head
+    private ComputeBuffer m_listNodes;                  // per-pixel linked list, containing color & depth information
 
-    private int m_width;                        // target width
-    private int m_height;                       // target height
+    private int m_width;                                // target width
+    private int m_height;                               // target height
 
-    private Material m_compositeMat;            // composition material
+    private Material m_compositeMat;                    // composition material
+    private RenderTexture m_resolvedTex;                // the sorted transparency texture
 
-    private const int kMaxPerPixelNodes = 20;   // How many levels deep we store information per-pixel
-        
+    private const int kMaxPerPixelNodes = 20;           // How many levels deep we store information per-pixel
+    
     //-------------------------------------------------------------
     private void Awake ()
     {
@@ -57,6 +67,10 @@ public class OITCamera : MonoBehaviour
             DestroyImmediate(m_compositeMat);
         m_compositeMat = null;
         
+        if (m_resolvedTex != null)
+            DestroyImmediate(m_resolvedTex);
+        m_resolvedTex = null;
+
         if (m_headPointers != null)
             m_headPointers.Dispose();
         m_headPointers = null;
@@ -74,34 +88,59 @@ public class OITCamera : MonoBehaviour
 
         DestroyResources();
 
-        m_compositeMat = new Material(m_compositeShader);
+        if (m_width != 0 && m_height != 0)
+        {
+            m_compositeMat = new Material(m_compositeShader);
 
-        // The following must match the OITNode declaration in the shader-side.
-        int nodeSizeInBytes = sizeof(float) * 4 + sizeof(float) + sizeof(uint);
+            // The following must match the OITNode declaration in the shader-side.
+            int nodeSizeInBytes = sizeof(float) * 4 + sizeof(float) + sizeof(uint);
 
-        m_headPointers = new ComputeBuffer(m_width * m_height, sizeof(uint), ComputeBufferType.Default | ComputeBufferType.Counter);
-        m_listNodes = new ComputeBuffer(m_width * m_height * kMaxPerPixelNodes, nodeSizeInBytes, ComputeBufferType.Default);
-        
-        Shader.SetGlobalBuffer("_OITHeadPointers", m_headPointers);
-        Shader.SetGlobalBuffer("_OITNodes", m_listNodes);
+            m_headPointers = new ComputeBuffer(m_width * m_height, sizeof(uint), ComputeBufferType.Default | ComputeBufferType.Counter);
+            m_listNodes = new ComputeBuffer(m_width * m_height * kMaxPerPixelNodes, nodeSizeInBytes, ComputeBufferType.Default);
+
+            m_resolvedTex = new RenderTexture(m_width, m_height, 0, RenderTextureFormat.ARGBHalf);
+            m_resolvedTex.enableRandomWrite = true;
+            m_resolvedTex.Create();
+
+            Shader.SetGlobalBuffer("_OITHeadPointers", m_headPointers);
+            Shader.SetGlobalBuffer("_OITNodes", m_listNodes);
+        }
     }
 
     //-------------------------------------------------------------
     private void OnPreRender()
     {
-        // Reset the counter in the headPointers StructuredBuffer
-        m_headPointers.SetCounterValue(0);
+        if (m_headPointers != null)
+        {
+            // Reset the counter in the headPointers StructuredBuffer
+            m_headPointers.SetCounterValue(0);
 
-        // Now reset all the head pointers to 0xffffffff
-        m_clearBuffersShader.SetBuffer(0, "_OITHeadPointers", m_headPointers);
-        m_clearBuffersShader.Dispatch(0, (m_headPointers.count / 64) * 64, 1, 1);
+            // Now reset all the head pointers to 0xffffffff
+            m_clearBuffersShader.SetBuffer(0, "_OITHeadPointers", m_headPointers);
+            m_clearBuffersShader.Dispatch(0, (m_headPointers.count / 64) * 64, 1, 1);
 
-        // I am not sure why this is required.
-        // If I don't specify to descriptor registers when writing to UAV from the pixel shader, it's never writen to.
-        Graphics.ClearRandomWriteTargets();
-        
-        Graphics.SetRandomWriteTarget(1, m_headPointers);
-        Graphics.SetRandomWriteTarget(2, m_listNodes);
+            // I am not sure why this is required.
+            // If I don't specify to descriptor registers when writing to UAV from the pixel shader, it's never writen to.
+            Graphics.ClearRandomWriteTargets();
+
+            Graphics.SetRandomWriteTarget(1, m_headPointers);
+            Graphics.SetRandomWriteTarget(2, m_listNodes);
+        }
+    }
+
+    //-------------------------------------------------------------
+    private void OnPostRender()
+    {
+        if (m_resolvedTex != null)
+        {
+            m_resolveShader.SetInt("_OITSortMode", (int)m_sortMode);
+            m_resolveShader.SetVector("_OITTargetSize", new Vector4(m_width, m_height, 0, 0));
+            m_resolveShader.SetBuffer(0, "_OITHeadPointers", m_headPointers);
+            m_resolveShader.SetBuffer(0, "_OITNodes", m_listNodes);
+            m_resolveShader.SetTexture(0, "_OITSortedTex", m_resolvedTex);
+
+            m_resolveShader.Dispatch(0, (m_resolvedTex.width / 8) * 8, (m_resolvedTex.height / 8) * 8, 1);
+        }
     }
 
     //-------------------------------------------------------------
@@ -135,6 +174,14 @@ public class OITCamera : MonoBehaviour
     //-------------------------------------------------------------
     private void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
-        Graphics.Blit(source, destination, m_compositeMat);
+        if (m_compositeMat != null)
+        {
+            m_compositeMat.SetTexture("_OITSortedTex", m_resolvedTex);
+            Graphics.Blit(source, destination, m_compositeMat);
+        }
+        else
+        {
+            Graphics.Blit(source, destination);
+        }
     }
 }

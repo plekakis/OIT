@@ -3,3 +3,5 @@ obj/Debug/Assembly-CSharp.csproj.FileListAbsolute.txt
 Library/
 *.csproj
 *.sln
+Temp/
+.vs/
