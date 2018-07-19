@@ -52,7 +52,7 @@ void Sort(inout OITNode io_nodes[MAX_OIT_PIXEL_NODES], uint i_count)
 	}
 }
 
-[numthreads(8,8,1)]
+[numthreads(16,16,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
 	if (id.x < (uint)_OITTargetSize.x && id.y < (uint)_OITTargetSize.y)

@@ -139,7 +139,7 @@ public class OITCamera : MonoBehaviour
             m_resolveShader.SetBuffer(0, "_OITNodes", m_listNodes);
             m_resolveShader.SetTexture(0, "_OITSortedTex", m_resolvedTex);
 
-            m_resolveShader.Dispatch(0, (m_resolvedTex.width / 8) * 8, (m_resolvedTex.height / 8) * 8, 1);
+            m_resolveShader.Dispatch(0, (m_resolvedTex.width / 16) * 16, (m_resolvedTex.height / 16) * 16, 1);
         }
     }
 
