@@ -4,12 +4,8 @@ OIT Sample in Unity using per-pixel linked lists
 Overview:
 ---------
 1) The transparent geometry shader is writing out pixel color, depth and the next list link in a linked list StructureBuffer.
-2) OnRenderImage, composite the transparent geometry in the scene by sorting the current pixel's linked list by pixel depth. Blend the sorted colors with the rest of the scene.
-
-Known issues:
--------------
-For some reason there is a lot of flickering when writing the full rgb color. I haven't had the chance to investigate yet, but it could be a syncing/race condition problem.
-A workaround for now is it write .bbba as output of the OIT composition.
+2) OnPostRender, resolve the transparent geometry by sorting the per pixel linked list by pixel depth.
+2) OnRenderImage, blend the sorted transparency texture with the rest of the scene.
 
 Improvements to be done:
 ------------------------
